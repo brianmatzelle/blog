@@ -159,27 +159,78 @@ Tracing this back to model weights gives you a non-uniform quantization plan:
 | SAE-guided ~3-bit avg | 29 MB | 62% |
 | SAE-guided ~2.5-bit avg | 23 MB | 70% |
 
-## The Bigger Picture
+## Taking It to the 7B Transformer
 
-Mimi is only 1.1% of PersonaPlex's 7B parameters. The real VRAM hog is the temporal transformer. But the same technique applies: train SAEs on the transformer's residual stream, find which layers and attention heads encode acoustic fidelity versus semantic content, and quantize accordingly.
+Mimi is only 1.1% of PersonaPlex's 7B parameters. The real VRAM hog is the temporal transformer -- 32 layers, 4096-dim, 3.29B parameters. That's where the savings need to come from.
 
-Projected numbers for the full model:
+I loaded the full 4-bit PersonaPlex model (6.9 GB VRAM), hooked all 32 transformer layers, ran 100 audio files through, and saved per-layer residual stream activations to disk. Then trained a linear probe on each layer's activations predicting spectral centroid -- the same technique as the Mimi analysis, but now asking "which transformer layers care most about acoustic detail?"
 
-| Strategy | VRAM |
-|---|---|
-| Uniform 4-bit (what I have today) | ~3.5 GB |
-| SAE-guided ~3-bit avg | ~2.6 GB |
-| SAE-guided ~2.5-bit avg | ~2.2 GB |
+The early layers stand out:
 
-2.2 GB puts full-duplex speech-to-speech on a Jetson Orin Nano. Or a phone. The quality floor is "radio" -- band-limited but fully intelligible. For a voice assistant, that's all you need.
+| Layer | Centroid Accuracy | Interpretation |
+|---|---|---|
+| Input embeddings | 0.178 | Raw token representations |
+| Layer 0 | 0.201 | Most semantic -- still building from embeddings |
+| Layer 1 | 0.212 | Still relatively semantic |
+| Layers 2-31 | 0.276-0.316 | Acoustic info fully represented, roughly flat |
+| Layer 14 | **0.316** | Peak acoustic layer |
 
-The insight that makes this work: **if you know what each part of the model does, you know what you can afford to lose.** Uniform quantization treats every weight as equally important. Mechanistic interpretability says they're not.
+To go deeper, I trained SAEs on three representative layers (0, 14, 31) and probed their decomposed features:
 
-## What's Next
+| Layer | Probe Accuracy | Low-freq features | High-freq features |
+|---|---|---|---|
+| 0 | 0.232 | 1809 (22%) | 3989 (49%) |
+| 14 | **0.289** | 1019 (12%) | **5827 (71%)** |
+| 31 | 0.241 | 559 (7%) | 6979 (85%) |
 
-Train SAEs on the 7B temporal transformer's residual stream, per-layer. Identify which attention heads specialize in acoustic detail versus semantic content. Build the non-uniform quantization and measure the actual quality/size tradeoff end-to-end.
+Layer 14 has the highest probe accuracy AND 71% high-frequency features -- it's the peak acoustic processing layer. Layer 0 is the most balanced with 22% low-frequency features, confirming it carries more of the semantic/fundamental speech content.
 
-The code is at [eq-personaplex](https://github.com/brianmatzelle/eq-personaplex). The full pipeline (data download → activation extraction → SAE training → probe training → feature analysis → steering) runs in about 15 minutes on an RTX 4070.
+## The Pruning Experiment
+
+With the importance map in hand, I tried MI-guided weight pruning: aggressively prune layers with high acoustic scores, preserve layers with low scores. The SAE analysis directly determined which layers to target and how hard.
+
+**Aggressive pruning (37.5% of weights removed):** The model produced silence. All PAD tokens, no speech. Even though the representation metrics looked stable (output norms drifted only 3.5%), the pruning destroyed the model's ability to generate coherent tokens. This is a 4-bit model -- the weights are already compressed, and removing 37.5% on top of that is too much.
+
+**Conservative pruning (2.4% of weights removed, targeting only the most acoustic layers):** Speech came back. "Hey, let me know if you have..." -- same coherent response as baseline. Intelligible, functional, but the VRAM savings at 2.4% are negligible.
+
+The gap between "still works" and "meaningful savings" turned out to be wide.
+
+## Why Per-Layer Pruning Isn't Enough
+
+The probe accuracy across layers ranged from 0.20 to 0.32 -- a narrow spread. There's no layer that's purely acoustic or purely semantic. Every layer in the temporal transformer encodes a mix of both, because speech-to-speech models need to simultaneously understand *what's being said* and *how it sounds* at every step of generation.
+
+This is fundamentally different from what Anthropic found in text models, where you can identify layers that specialize in syntax, semantics, or factual recall. In a speech model, acoustic and semantic information are deeply entangled.
+
+The Mimi codec analysis worked beautifully because Mimi's *job* is acoustic encoding -- its latent space is supposed to represent spectral properties, and the SAE found clean monosemantic features for exactly that. The temporal transformer's job is more complex: it processes audio tokens while jointly modeling language, turn-taking, voice identity, and acoustic generation. Asking "which layers are acoustic?" is like asking "which layers of GPT are about grammar?" -- the answer is all of them, to varying degrees.
+
+## What Actually Works (And What Would)
+
+**What worked:**
+- SAE decomposition of Mimi's latent space into interpretable EQ features (48.1% probe accuracy, 10x random baseline)
+- Steering those features to produce audible radio effect (spectral centroid 2832 Hz → 1241 Hz)
+- Mapping the temporal transformer's layer specialization (early layers clearly more semantic)
+- Conservative MI-guided pruning that preserves speech quality
+
+**What didn't work (yet):**
+- Aggressive pruning of the temporal transformer for meaningful VRAM savings
+
+**What would likely work with more investment:**
+
+1. **Per-head analysis instead of per-layer.** Individual attention heads are more likely to be monosemantic than full layers. If you train SAEs on each of the 32 × 32 = 1024 attention heads, you'd almost certainly find some that are purely acoustic detail. Removing those entire heads gives real speedup and VRAM savings, not just weight sparsity.
+
+2. **Codebook reduction.** We ran the model at 4/8 codebooks and it worked fine. This directly halves the depformer's token throughput. It's the easiest real win and doesn't require MI at all -- but MI tells you *why* it works (the upper codebooks encode the high-frequency detail the SAE identified as expendable).
+
+3. **MI-guided knowledge distillation.** Train a smaller model that only needs to preserve the features our SAE analysis identified as important for intelligibility. Use the feature importance map as the distillation objective, not just output matching.
+
+4. **GPTQ/AWQ with MI-informed calibration.** Standard quantization-aware methods already do per-layer importance weighting. Feeding them calibration data biased toward speech intelligibility metrics (rather than generic perplexity) could achieve mixed-precision quantization that the standard pipeline can't.
+
+## The Real Takeaway
+
+The contribution isn't VRAM savings -- not yet. It's the methodology. We built a pipeline that can look inside a speech model, decompose its representations into interpretable features, and tell you what each part does. That's the foundation. The Mimi results prove it works when the target space is well-matched (audio codec → acoustic features). The transformer results show where the limits are (entangled representations in a multi-task model) and point toward where finer-grained analysis (per-head, per-channel) would break through.
+
+Mechanistic interpretability for model compression is a real research direction. But it needs to operate at the right granularity -- and for speech transformers, that granularity is finer than per-layer.
+
+The code is at [eq-personaplex](https://github.com/brianmatzelle/eq-personaplex). The full pipeline (data download → activation extraction → SAE training → probe training → feature analysis → steering → transformer probing → pruning) runs end-to-end on an RTX 4070 12GB.
 
 ## Links
 
