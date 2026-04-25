@@ -14,7 +14,7 @@ Turns out Anthropic published the playbook for this. Their [monosemantic feature
 
 ## The Idea
 
-PersonaPlex is built on [Moshi](https://github.com/kyutai-labs/moshi), which has three main components: a Mimi audio codec (encoder/decoder), a 7B temporal transformer, and a smaller depth transformer. Mimi is the part that touches raw audio -- it compresses 24kHz waveforms into 512-dimensional latent vectors at 25Hz, then a residual vector quantizer discretizes them into tokens.
+PersonaPlex is built on [Moshi](https://github.com/kyutai-labs/moshi), which has three main components: a Mimi audio codec (encoder/decoder), a 7B temporal transformer, and a smaller depth transformer. Mimi is the part that touches raw audio. It compresses 24kHz waveforms through a strided convolutional stack into 512-dimensional latent vectors at 25 Hz, runs them through an encoder transformer at that rate, then applies one final 2x downsample to land at the 12.5 Hz rate that the LM actually sees. A *split* residual vector quantizer then discretizes -- codebook 0 carries semantic content (distilled from WavLM during Mimi's training), codebooks 1-7 carry acoustic detail. The SAE in this post hooks the encoder transformer output, which sits at the pre-downsample 25 Hz rate.
 
 Those 512-dimensional latent vectors are where audio properties like frequency content, amplitude, and timbre get encoded. If you can decompose that space into interpretable features, you know exactly what each dimension is doing. And if you know what each dimension is doing, you know which ones you can throw away.
 
@@ -136,9 +136,9 @@ Fix was straightforward: normalize before SAE encode, denormalize after SAE deco
 
 ## Where This Gets Interesting: Non-Uniform Quantization
 
-The radio effect is fun, but the real payoff is the importance map. The SAE + probe gives us a way to score every one of Mimi's 512 latent dimensions by how much it contributes to speech intelligibility versus high-frequency detail.
+The radio effect is fun, but the real payoff is the importance map. The SAE + probe gives us a way to score every one of Mimi's 512 latent dimensions by how much it contributes to spectral centroid versus high-frequency detail.
 
-The composition is simple: SAE encoder weights tell you which latent dimensions activate which features. Probe weights tell you which features correspond to which spectral centroid ranges. Multiply them together and you get a direct map from latent dimensions to "does this carry speech content or just sparkle?"
+The composition is simple: SAE encoder weights tell you which latent dimensions activate which features. Probe weights tell you which features correspond to which spectral centroid ranges. Multiply them together and you get a direct map from latent dimensions to "does this carry low-frequency speech content or just sparkle?"
 
 The result:
 
@@ -148,7 +148,9 @@ The result:
 | **Moderate** (0.3 - 0.7) | 220 | 43% |
 | **Critical** (>= 0.7) | 7 | 1% |
 
-**56% of Mimi's latent dimensions are expendable for speech intelligibility.** Only 7 out of 512 are critical. That's a lot of weight budget going toward frequencies you don't need if your quality target is "radio" rather than "studio."
+**56% of Mimi's latent dimensions are expendable for low-frequency spectral content.** Only 7 out of 512 are critical. That's a lot of weight budget going toward frequencies you don't need if your quality target is "radio" rather than "studio."
+
+A caveat worth surfacing here: "expendable" means "low contribution to spectral centroid." That's a decent proxy for low-frequency speech content vs high-frequency detail, but it isn't a complete intelligibility metric -- pitch, formant structure, and voice identity aren't centroid-driven. The head-pruning experiment below surfaces this directly: some heads classified as "acoustic" via centroid probing turn out to encode voice identity. Read the map as "what carries low-frequency content," not "what carries everything that matters for speech."
 
 Tracing this back to model weights gives you a non-uniform quantization plan:
 
