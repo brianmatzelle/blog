@@ -1,6 +1,6 @@
 ---
 title: "Finding EQ Knobs Inside a Neural Audio Codec with Sparse Autoencoders"
-date: 2026-03-17
+date: 2026-08-20
 revision: 2
 revised: 2026-08-20
 revisionNote: "Controlled rerun with baselines, objective metrics, and direct ablation tests. Some claims strengthened, some corrected, one refuted."
