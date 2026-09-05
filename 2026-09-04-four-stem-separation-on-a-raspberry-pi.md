@@ -8,19 +8,15 @@ tags: [deep-learning, audio, source-separation, raspberry-pi, onnx, distillation
 
 I have a terminal IPTV/Spotify app called termtv that runs on a Raspberry Pi 4 plugged into a CRT. It has a DJ deck in it -- a chop-and-screw sampler, a tempo-synced echo, a bunch of knobs on an `--af` chain. The knob I wanted most was the one that takes the drums out of whatever is playing, so a screwed song can play drumless under the deck's haze. Then the bass. Then the vocals, so the sampler can chop an acapella.
 
-That knob now exists. It is a 0.86M-parameter model, distilled from Demucs, running in a child process on the Pi at about two thirds of one Cortex-A72 core, with four mask heads on one body so any combination of drums / bass / other / vocals comes out of the same forward pass. It sits in the Spotify receiver's PCM path in front of the sampler, so pads, chops and the screw all work on the stemmed song.
+**Try it first.** The exact model the Pi runs, in your browser. Press the sample clip or open a file, then pull a stem's slider down to take it out of the song, live; three at 0 isolates the fourth. In Chrome or Edge you can paste a YouTube link, open it in a new tab and capture that tab's audio. Nothing leaves your machine.
+
+<div data-demo="stems"><a href="https://matzelle.co/blog/2026-09-04-four-stem-separation-on-a-raspberry-pi">▶ there is a live, in-browser demo of the model in this post on matzelle.co</a></div>
+
+That is the whole model: 3.4 MB, 232 ms of lookahead, nothing else. On the Pi it is the knob: 0.86M parameters, distilled from Demucs, running in a child process at about two thirds of one Cortex-A72 core, with four mask heads on one body so any combination of drums / bass / other / vocals comes out of the same forward pass. It sits in the Spotify receiver's PCM path in front of the sampler, so pads, chops and the screw all work on the stemmed song.
 
 Before writing this up I went looking for prior art, because I was fairly sure someone had done it. As far as I can find, nobody has -- not this small, on this class of CPU, in a live audio path. It is not a surprising result. Every ingredient is in the literature. It is more like a branch on the tree that hadn't been grown yet, and I find it a particularly interesting one, so here is how it was done and where it sits honestly against the published work.
 
 If you would rather watch than read, there is a three-minute animated explainer [at the bottom of this post](#explainer): the mix as a sum, the spectrogram, the mask, the 54 bands, the two GRU passes, the lookahead as a delay, the four heads, the training, and the Pi's time budget, in that order.
-
-## Try it first
-
-The same model runs in your browser. Below is the exact `student.onnx` the Pi runs, under onnxruntime-web, with the Pi's streaming runtime ported to JavaScript line for line. Press the sample clip (a held-out track the model never saw), or open a file of your own, then pull a slider down: every stem starts at 100, all the way in the mix, and dragging one to 0 takes it out of the song, live. Three at 0 isolates the fourth. In Chrome or Edge you can also paste a YouTube link, open it in a new tab, and capture that tab's audio, so the stems come off whatever is playing over there. Nothing leaves your machine.
-
-<div data-demo="stems"><a href="https://matzelle.co/blog/2026-09-04-four-stem-separation-on-a-raspberry-pi">▶ there is a live, in-browser demo of the model in this post on matzelle.co</a></div>
-
-That is the whole model, 3.4 MB, with 232 ms of lookahead and nothing else. The rest of this post is how it was built and where it lands against the published work.
 
 ## What existed before
 
