@@ -80,7 +80,7 @@ Why complements rather than stems? Because the knob is *remove this*, and a "kee
 
 ### Beat-grid conditioning
 
-Every band's input gets five conditioning values appended: sin/cos of beat phase, sin/cos of bar phase, and a grid confidence. On the Pi these come from termtv's own beat-grid estimator (the one the sampler quantizes to), and training computes them with the *same* estimator on each crop so the model sees the same failure modes in training as in production. A fraction of crops get the grid dropped to zero so the model never depends on it. I don't have an ablation for how much this buys; it was cheap to add because the grid was already there.
+Every band's input gets five conditioning values appended: sin/cos of beat phase, sin/cos of bar phase, and a grid confidence. On the Pi these come from termtv's own beat-grid estimator (the one the sampler quantizes to), and training computes them with the *same* estimator on each crop so the model sees the same failure modes in training as in production. A fraction of crops get the grid dropped to zero so the model never depends on it. I did not have an ablation for how much this buys when I built it; it was cheap to add because the grid was already there. The eval at the end of this post now has one: 0.07 dB. Almost nothing.
 
 ### Distillation from Demucs
 
@@ -116,24 +116,36 @@ The numbers, per 23.2 ms block of audio, same model and WASM build:
 
 So the Pi in a browser is just over the edge: the model alone fits, the JavaScript FFTs around it tip it into dropouts. Native onnxruntime does the same block in 15.5 ms on that core and leaves room, which is the whole reason the Pi's runtime is numpy + onnxruntime and not this. A laptop has far more headroom than it needs; the demo prints what it measures on yours.
 
-Two honest caveats about the demo. It runs without the beat grid -- the conditioning is zeros, the mode a fraction of the training crops saw -- so it is a little worse than the Pi's path on the same song. And a web page cannot read the audio out of a YouTube embed; the iframe is another origin, and that is the end of it. What works is tab capture: open the video in its own tab, then capture that tab with its audio, in Chrome or Edge. The source tab is muted locally and the stemmed version plays here, about 0.3 s late (the model's 232 ms plus the worklet's buffer). Firefox and Safari cannot capture tab audio; the bundled clip and the file picker work everywhere. The bundled clip is a Creative Commons track from the Free Music Archive that was **not** in the distillation set -- credited in the demo -- so what you hear is the model on a song it never saw.
+Two honest caveats about the demo. It runs without the beat grid -- the conditioning is zeros, the mode a fraction of the training crops saw -- which the eval below puts at 0.07 dB worse than the Pi's path. And a web page cannot read the audio out of a YouTube embed; the iframe is another origin, and that is the end of it. What works is tab capture: open the video in its own tab, then capture that tab with its audio, in Chrome or Edge. The source tab is muted locally and the stemmed version plays here, about 0.3 s late (the model's 232 ms plus the worklet's buffer). Firefox and Safari cannot capture tab audio; the bundled clip and the file picker work everywhere. The bundled clip is a Creative Commons track from the Free Music Archive that was **not** in the distillation set -- credited in the demo -- so what you hear is the model on a song it never saw.
 
 ## Where it lands
 
-On MUSDB18-HQ test (12 songs, first 60 s, my own metrics), per head:
+museval -- BSSEval v4, one-second frames, the scorer the MUSDB literature reports -- on the isolated stems, `mix − complement`, over all 50 songs of the MUSDB18-HQ test set at full length, with the beat grid on. The headline column is the SiSEC convention: the median over a song's frames, then the median over songs. The mean over songs is beside it.
+
+| head | SDR (median) | SDR (mean) | SIR | SAR |
+|---|---|---|---|---|
+| drums | 4.61 | 5.13 | 9.9 | 3.5 |
+| bass | 3.61 | 3.61 | 8.0 | 3.3 |
+| other | 2.72 | 2.70 | 2.3 | 3.1 |
+| vocals | 4.22 | 3.69 | 11.0 | 3.1 |
+| **mean** | **3.79** | 3.78 | | |
+
+So the number that belongs next to the table at the top is **3.79 dB**, and it is the lowest number on it: 0.9 dB under HS-TasNet (42M parameters), 1.4 under RT-STT (383K, but timed on a GPU), 4 dB under Band-SCNet. I did not beat anyone. What the 0.86M parameters and the 186 ms of lookahead buy is that the model runs on a Pi, not that it separates better than the models that don't. As a two-source vocals/accompaniment separator, the karaoke framing, the accompaniment scores 10.6 dB (MMDenseNet karaoke: ~13.7) and the vocals 3.9.
+
+The SIR and SAR columns say where the 3.8 dB goes. Interference is handled -- 10 dB on drums and 11 on vocals means what is in the isolated stem is mostly that stem -- but artifacts sit at about 3 dB on every head. That is the price of the complement formulation: each head learns to make the song *without* its stem sound right, so the isolated stem is the leftover, and every error in the complement lands in it at full size. "Other" is the exception in the SIR column: at 2.3 dB it is barely separated at all.
+
+Without the beat grid -- zero conditioning, the demo's mode -- the same eval reads 3.72 dB (drums 4.50, bass 3.64, other 2.65, vocals 4.08). The grid is worth 0.07 dB on this set. That is the ablation I did not have when I wrote the conditioning section, and it says two things: the browser demo is not meaningfully worse than the Pi, and the grid was not worth the plumbing.
+
+The metrics I actually tune by, re-run over the same 50 full songs (the first version of this post had them over 12 songs at 60 s; nothing moved by more than a dB):
 
 | head | SDR (complement) | attenuation | damage |
 |---|---|---|---|
-| drums | 8.54 | −10.1 dB | −10.8 dB |
-| bass | 9.51 | −9.3 dB | −12.3 dB |
-| other | 9.04 | −5.9 dB | −13.2 dB |
-| vocals | 12.03 | −10.0 dB | −14.5 dB |
+| drums | 9.12 | −9.8 dB | −11.9 dB |
+| bass | 10.45 | −9.0 dB | −13.1 dB |
+| other | 8.24 | −7.2 dB | −11.6 dB |
+| vocals | 11.24 | −8.6 dB | −14.5 dB |
 
-Where "attenuation" is the least-squares amount of the stem still present in the output and "damage" is what was done to everything that is *not* the stem. I use those two because SDR alone rewards doing nothing whenever the stem is quiet. "Other" is the weak stem, as it is for every separator (Demucs itself sits near 5 dB on it).
-
-**These numbers are not comparable to the table above, and I want to say that plainly.** The literature reports museval SDR of the *isolated stem* over all 50 test songs. Mine is SDR of the *residual* -- everything but the stem -- over 12 songs at 60 s, with a home-grown scorer. Residual SDR reads higher than isolated-stem SDR, especially for "other", because the residual is most of the energy in the mix. I do not currently have a number I can put next to Band-SCNet's 7.79 and claim to have beaten it.
-
-**TODO:** run museval on the isolated stems (`mix − complement`) over the full 50-song MUSDB18-HQ test set and revise this post with the result. The stems are already in the corpus; it is an eval change, not new data. I will update the table above, and if the number is worse than I hope, that goes in too.
+"Attenuation" is the least-squares amount of the stem still present in the output and "damage" is what was done to everything that is *not* the stem. Those two are what a knob that *removes* a stem is judged by: the drums go 10 dB down and the rest of the song stays 12 dB clean of collateral, and that is what the demo sounds like. They read far higher than the museval numbers because the complement is most of the mix, which is why the first version of this post refused to put them next to the published table, and why this version has a number that can go there.
 
 ## The honest summary
 
@@ -145,7 +157,7 @@ What is genuinely uncommon here:
 
 What is not novel: the band-split GRU (BSRNN), lookahead-as-delay, mask-based separation, the remix augmentation, pseudo-labelling from a big teacher. All borrowed, all cited below.
 
-What it trades away: **latency.** 186 ms of model lookahead and 279 ms end to end, against 23-92 ms for the published real-time models. That trade is what the numbers are built on, and it only works because the player already had the buffer.
+What it trades away: **latency, and separation quality.** 186 ms of model lookahead and 279 ms end to end, against 23-92 ms for the published real-time models; 3.8 dB of museval SDR against their 4.7 to 7.8. The latency trade is what the model is built on, and it only works because the player already had the buffer. The quality gap is the size of the model, and a bigger one does not fit in the Pi's time budget.
 
 If you have a device with an ARM CPU, a second or so of buffer you were already paying for, and want stems, this is the point on the curve I couldn't find anyone else standing on. The code is in `drumsep/` of the termtv repo; the model is `student.onnx`, 0.86M parameters, and the training pipeline is one shell script on the Spark.
 
@@ -159,6 +171,7 @@ Nine chapters: a mix is a sum; time × frequency; the mask; 54 bands; the body's
 
 ## References
 
+- Stöter, Liutkus & Ito, [The 2018 Signal Separation Evaluation Campaign](https://arxiv.org/abs/1804.06267) -- museval, the BSSEval v4 scorer and its median-over-frames-then-songs convention.
 - Luo & Yu, [Music Source Separation with Band-Split RNN](https://arxiv.org/pdf/2209.15174) -- the band-split GRU with shared weights.
 - Yang et al., [Band-SCNet: A Causal, Lightweight Model for High-Performance Real-Time Music Source Separation](https://www.isca-archive.org/interspeech_2025/yang25d_interspeech.pdf), Interspeech 2025.
 - [Towards Practical Real-Time Low-Latency Music Source Separation (RT-STT)](https://arxiv.org/abs/2511.13146), arXiv 2511.13146.
