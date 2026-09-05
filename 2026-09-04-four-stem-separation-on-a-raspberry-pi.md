@@ -12,7 +12,13 @@ That knob now exists. It is a 0.86M-parameter model, distilled from Demucs, runn
 
 Before writing this up I went looking for prior art, because I was fairly sure someone had done it. As far as I can find, nobody has -- not this small, on this class of CPU, in a live audio path. It is not a surprising result. Every ingredient is in the literature. It is more like a branch on the tree that hadn't been grown yet, and I find it a particularly interesting one, so here is how it was done and where it sits honestly against the published work.
 
+## Try it first
+
+The same model runs in your browser. Below is the exact `student.onnx` the Pi runs, under onnxruntime-web, with the Pi's streaming runtime ported to JavaScript line for line. Press the sample clip (a held-out track the model never saw), or open a file of your own, then pull the sliders: each one takes that stem out of the song, live, and three at full isolates the fourth. In Chrome or Edge you can also paste a YouTube link, open it in a new tab, and capture that tab's audio, so the stems come off whatever is playing over there. Nothing leaves your machine.
+
 <div data-demo="stems"><a href="https://matzelle.co/blog/2026-09-04-four-stem-separation-on-a-raspberry-pi">▶ there is a live, in-browser demo of the model in this post on matzelle.co</a></div>
+
+That is the whole model, 3.4 MB, with 232 ms of lookahead and nothing else. The rest of this post is how it was built and where it lands against the published work.
 
 ## What existed before
 
