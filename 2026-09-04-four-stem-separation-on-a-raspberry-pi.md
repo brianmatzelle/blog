@@ -12,6 +12,8 @@ That knob now exists. It is a 0.86M-parameter model, distilled from Demucs, runn
 
 Before writing this up I went looking for prior art, because I was fairly sure someone had done it. As far as I can find, nobody has -- not this small, on this class of CPU, in a live audio path. It is not a surprising result. Every ingredient is in the literature. It is more like a branch on the tree that hadn't been grown yet, and I find it a particularly interesting one, so here is how it was done and where it sits honestly against the published work.
 
+If you would rather watch than read, there is a three-minute animated explainer [at the bottom of this post](#explainer): the mix as a sum, the spectrogram, the mask, the 54 bands, the two GRU passes, the lookahead as a delay, the four heads, the training, and the Pi's time budget, in that order.
+
 ## Try it first
 
 The same model runs in your browser. Below is the exact `student.onnx` the Pi runs, under onnxruntime-web, with the Pi's streaming runtime ported to JavaScript line for line. Press the sample clip (a held-out track the model never saw), or open a file of your own, then pull a slider down: every stem starts at 100, all the way in the mix, and dragging one to 0 takes it out of the song, live. Three at 0 isolates the fourth. In Chrome or Edge you can also paste a YouTube link, open it in a new tab, and capture that tab's audio, so the stems come off whatever is playing over there. Nothing leaves your machine.
@@ -150,6 +152,14 @@ What is not novel: the band-split GRU (BSRNN), lookahead-as-delay, mask-based se
 What it trades away: **latency.** 186 ms of model lookahead and 279 ms end to end, against 23-92 ms for the published real-time models. That trade is what the numbers are built on, and it only works because the player already had the buffer.
 
 If you have a device with an ARM CPU, a second or so of buffer you were already paying for, and want stems, this is the point on the curve I couldn't find anyone else standing on. The code is in `drumsep/` of the termtv repo; the model is `student.onnx`, 0.86M parameters, and the training pipeline is one shell script on the Spark.
+
+## The three-minute version
+
+The same story as the sections above, animated. Silent, with captions in place of narration, made with manim.
+
+<div class="explainer" id="explainer"><video controls preload="metadata" playsinline poster="https://matzelle.co/demos/stems/explainer.jpg" src="https://matzelle.co/demos/stems/explainer.mp4"><a href="https://matzelle.co/demos/stems/explainer.mp4">the explainer video (mp4, 8 MB, 3:11)</a></video></div>
+
+Nine chapters: a mix is a sum; time × frequency; the mask; 54 bands; the body's two passes; lookahead as a delay; one body, four heads; where the answers come from; fitting it on the Pi.
 
 ## References
 
