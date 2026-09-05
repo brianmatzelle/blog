@@ -14,7 +14,7 @@ Before writing this up I went looking for prior art, because I was fairly sure s
 
 ## Try it first
 
-The same model runs in your browser. Below is the exact `student.onnx` the Pi runs, under onnxruntime-web, with the Pi's streaming runtime ported to JavaScript line for line. Press the sample clip (a held-out track the model never saw), or open a file of your own, then pull the sliders: each one takes that stem out of the song, live, and three at full isolates the fourth. In Chrome or Edge you can also paste a YouTube link, open it in a new tab, and capture that tab's audio, so the stems come off whatever is playing over there. Nothing leaves your machine.
+The same model runs in your browser. Below is the exact `student.onnx` the Pi runs, under onnxruntime-web, with the Pi's streaming runtime ported to JavaScript line for line. Press the sample clip (a held-out track the model never saw), or open a file of your own, then pull a slider down: every stem starts at 100, all the way in the mix, and dragging one to 0 takes it out of the song, live. Three at 0 isolates the fourth. In Chrome or Edge you can also paste a YouTube link, open it in a new tab, and capture that tab's audio, so the stems come off whatever is playing over there. Nothing leaves your machine.
 
 <div data-demo="stems"><a href="https://matzelle.co/blog/2026-09-04-four-stem-separation-on-a-raspberry-pi">▶ there is a live, in-browser demo of the model in this post on matzelle.co</a></div>
 
