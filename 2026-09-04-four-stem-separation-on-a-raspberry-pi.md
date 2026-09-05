@@ -12,6 +12,8 @@ That knob now exists. It is a 0.86M-parameter model, distilled from Demucs, runn
 
 Before writing this up I went looking for prior art, because I was fairly sure someone had done it. As far as I can find, nobody has -- not this small, on this class of CPU, in a live audio path. It is not a surprising result. Every ingredient is in the literature. It is more like a branch on the tree that hadn't been grown yet, and I find it a particularly interesting one, so here is how it was done and where it sits honestly against the published work.
 
+<div data-demo="stems"><a href="https://matzelle.co/blog/2026-09-04-four-stem-separation-on-a-raspberry-pi">▶ there is a live, in-browser demo of the model in this post on matzelle.co</a></div>
+
 ## What existed before
 
 Music source separation (MSS) is a mature field. Offline, the state of the art is very good: BS-RoFormer, SCNet-large, HT-Demucs all sit around 9-10 dB SDR on MUSDB18-HQ, and they are all tens of millions of parameters with seconds of context. They are what every "AI stem splitter" website runs.
@@ -96,6 +98,21 @@ The first deployment ran it on the audio tap thread and produced a one-second cu
 The fix was to move the model into a child process, pipelined one block deep -- the tap collects the *previous* reply rather than waiting on this one. The tap's per-block cost dropped to about 0.2 ms (a pipe write and a read of what is already there) at the price of one more block of latency, 232 → 279 ms end to end. The app also drops the interpreter switch interval to 1 ms for what stays on the thread.
 
 Measured on the Pi with the whole app up: the d=64 four-head graph runs one 23.2 ms block in about 15.5 ms of child CPU, versus about 11.5 for the d=48 one-head. Roughly 67% of one A72 core, in its own process, for four stems.
+
+### The same model, in a browser tab
+
+The demo at the top of this post is the same `student.onnx`, byte for byte, running in your browser under onnxruntime-web. The runtime around it -- the STFT framing, the sixteen-frame delay line, the mask combination, the overlap-add -- is a port of the Pi's numpy runtime to plain JavaScript, and it nulls against the Python one to better than 128 dB, which is the float32 noise floor. The model lives in a web worker on the single-threaded WASM build; an AudioWorklet ferries 1024-sample blocks to it over a MessagePort and plays the returned blocks out of a ring. Single-threaded on purpose: the threaded build needs cross-origin isolation, which would break every embed on the page, and the Pi runs it single-threaded anyway.
+
+The numbers, per 23.2 ms block of audio, same model and WASM build:
+
+| core | model per block | whole pipeline |
+|---|---|---|
+| Cortex-X925 (the Spark's CPU, under Node) | 1.4 ms | 8 % of real time |
+| Cortex-A72 (the Pi, in its own Firefox) | 21 ms | 1.05x real time |
+
+So the Pi in a browser is just over the edge: the model alone fits, the JavaScript FFTs around it tip it into dropouts. Native onnxruntime does the same block in 15.5 ms on that core and leaves room, which is the whole reason the Pi's runtime is numpy + onnxruntime and not this. A laptop has far more headroom than it needs; the demo prints what it measures on yours.
+
+Two honest caveats about the demo. It runs without the beat grid -- the conditioning is zeros, the mode a fraction of the training crops saw -- so it is a little worse than the Pi's path on the same song. And a web page cannot read the audio out of a YouTube embed; the iframe is another origin, and that is the end of it. What works is tab capture: open the video in its own tab, then capture that tab with its audio, in Chrome or Edge. The source tab is muted locally and the stemmed version plays here, about 0.3 s late (the model's 232 ms plus the worklet's buffer). Firefox and Safari cannot capture tab audio; the bundled clip and the file picker work everywhere. The bundled clip is a Creative Commons track from the Free Music Archive that was **not** in the distillation set -- credited in the demo -- so what you hear is the model on a song it never saw.
 
 ## Where it lands
 
